@@ -1,0 +1,9 @@
+python: /scratch/user/mincheolseong/.conda/envs/robodiff/bin/python
+saved log/lift_agentview_image.png
+saved log/lift_agentview_occluded.png
+saved log/lift_robot0_eye_in_hand_image.png
+agentview cam_pos(world): [0.5  0.   1.35]
+cube body: cube_main cube_pos(world): [-0.01536022 -0.02122482  0.83080589]
+cyl_pos(world): [ 0.16501586 -0.01379613  1.01252383]
+uv_cube: [119.034096 129.56398 ] uv_cyl: [119.034096 129.56398 ] radius_px: 18 height_px: 50
+done

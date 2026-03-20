@@ -1,0 +1,9 @@
+python: /scratch/user/mincheolseong/.conda/envs/robodiff/bin/python
+numpy ok 1.26.4
+mujoco_py ok
+robosuite ok (numba stub)
+saved log/lift_agentview.png (256, 256, 3)
+saved log/lift_robot0_eye_in_hand.png (256, 256, 3)
+agentview pos= [0.5  0.   1.35] quat= [0.653 0.271 0.271 0.653]
+robot0_eye_in_hand pos= [0.05 0.   0.  ] quat= [0.       0.707108 0.707108 0.      ]
+done

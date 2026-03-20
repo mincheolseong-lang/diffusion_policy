@@ -1,0 +1,5 @@
+python: /scratch/user/mincheolseong/.conda/envs/robodiff/bin/python
+saved log/lift_agentview_image.png
+saved log/lift_agentview_occluded.png
+saved log/lift_robot0_eye_in_hand_image.png
+done
