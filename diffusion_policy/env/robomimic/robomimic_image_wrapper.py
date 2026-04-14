@@ -1,5 +1,4 @@
 from typing import List, Optional
-from matplotlib.pyplot import fill
 import numpy as np
 import gym
 from gym import spaces
@@ -62,12 +61,33 @@ class RobomimicImageWrapper(gym.Env):
     def get_observation(self, raw_obs=None):
         if raw_obs is None:
             raw_obs = self.env.get_observation()
-        
+
         self.render_cache = raw_obs[self.render_obs_key]
 
-        obs = dict()
+        # robomimic EnvRobosuite exposes cube pose as ret["object"] (from di["object-state"]).
+        # Match str(key) so gym / OmegaConf key types cannot skip the special case.
+        obj_src = raw_obs.get("object")
+        if obj_src is None and "object-state" in raw_obs:
+            obj_src = raw_obs["object-state"]
+        obj_vec = (
+            None
+            if obj_src is None
+            else np.asarray(obj_src, dtype=np.float32).reshape(-1)
+        )
+
+        obs = {}
         for key in self.observation_space.keys():
-            obs[key] = raw_obs[key]
+            k = str(key)
+            if k == "red_target_pos":
+                if obj_vec is None or obj_vec.size < 3:
+                    raise RuntimeError(
+                        "shape_meta includes red_target_pos but raw observation has no "
+                        "'object' / 'object-state' vector (need ≥3 values). "
+                        "Ensure robosuite object observations are enabled."
+                    )
+                obs[key] = obj_vec[:3].copy()
+            else:
+                obs[key] = raw_obs[k]
         return obs
 
     def seed(self, seed=None):

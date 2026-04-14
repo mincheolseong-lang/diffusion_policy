@@ -1,0 +1,18 @@
+# Lift image only (no red_target_pos). Training: with prob apply_probability, same occlusion
+# as rollout — agentview fixed rect + wrist tracking box (red blob), both cameras together.
+# Validation stays clean when apply_probability < 1 (see RobomimicReplayImageDataset).
+# Rollout: OBSTACLE=1, OBSTACLE_ALPHA=1.0 — matches alpha/geometry below.
+defaults:
+  - lift_image
+
+name: lift_image_train_stoch_occ
+
+dataset:
+  image_occlusion:
+    enabled: true
+    rect_norm: [0.25, 0.25, 0.75, 0.75]
+    tracking_rect_norm: [0.45, 0.45, 0.85, 0.85]
+    color: [55, 55, 60]
+    alpha: 1.0
+    tracking_keys: [robot0_eye_in_hand_image]
+    apply_probability: 0.5

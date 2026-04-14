@@ -96,6 +96,24 @@ training:
   device: "cuda:0"
   seed: 42
   debug: False
+  # True: do not build RobomimicImageRunner (robosuite/EGL); train/val only — default on HPC
+  skip_env_runner: true
+  # True: run rollout in a subprocess (no inherited CUDA context → avoids EGL/CUDA segfault)
+  use_subprocess_rollout: false
+  # Image-space occlusion applied to rollout (test) observations only.
+  # Training/validation always uses clean data.
+  rollout_obs_occlusion:
+    enabled: false
+    # Overlay opacity in [0,1]: 1.0 = fully opaque block (old behavior); <1 blends with image (semi-transparent).
+    alpha: 1.0
+    # RGB patch color under the rectangle (same as dataset default).
+    color: [55, 55, 60]
+    # Fixed rectangle for agentview_image (x0, y0, x1, y1) normalized [0,1]
+    agentview_rect_norm: [0.25, 0.25, 0.75, 0.75]
+    # Tracking box for robot0_eye_in_hand_image expressed as [x0,y0,x1,y1];
+    # box size = (x1-x0, y1-y0); center tracks red target each frame.
+    wrist_rect_norm: [0.45, 0.45, 0.85, 0.85]
+    wrist_tracking: true
   resume: True
   # optimization
   lr_scheduler: cosine

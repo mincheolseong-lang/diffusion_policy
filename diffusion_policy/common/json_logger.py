@@ -1,4 +1,5 @@
 from typing import Optional, Callable, Any, Sequence
+import io
 import os
 import copy
 import json
@@ -24,17 +25,20 @@ def read_json_log(path: str,
             elif not line.endswith('\n'):
                 # incomplete line
                 break
-            is_relevant = False
-            for k in required_keys:
-                if k in line:
-                    is_relevant = True
-                    break
+            if not required_keys:
+                is_relevant = True
+            else:
+                is_relevant = False
+                for k in required_keys:
+                    if k in line:
+                        is_relevant = True
+                        break
             if is_relevant:
                 lines.append(line)
     if len(lines) < 1:
         return pd.DataFrame()  
     json_buf = f'[{",".join([line for line in (line.strip() for line in lines) if line])}]'
-    df = pd.read_json(json_buf, **kwargs)
+    df = pd.read_json(io.StringIO(json_buf), **kwargs)
     return df
 
 class JsonLogger:

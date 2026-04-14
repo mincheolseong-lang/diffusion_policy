@@ -78,8 +78,10 @@ class RobomimicImageRunner(BaseImageRunner):
         # read from dataset
         env_meta = FileUtils.get_env_metadata_from_dataset(
             dataset_path)
-        # disable object state observation
-        env_meta['env_kwargs']['use_object_obs'] = False
+        # Robomimic EnvRobosuite forces use_object_obs=True internally; keep dataset flag
+        # aligned when the policy uses red cube XYZ (red_target_pos).
+        env_meta['env_kwargs']['use_object_obs'] = (
+            'red_target_pos' in shape_meta['obs'])
 
         rotation_transformer = None
         if abs_action:

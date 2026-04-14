@@ -1,0 +1,18 @@
+# Lift image policy + red cube XYZ from obs["object"][:3] (robomimic ph image.hdf5).
+# 학습/검증: 깨끗한 이미지 + red_target_pos. 롤아웃: OBSTACLE=1 시 가려진 이미지 + 동일 low-dim (좌표는 시뮬에서 읽음).
+defaults:
+  - lift_image
+
+name: lift_image_red_target
+
+shape_meta:
+  obs:
+    red_target_pos:
+      shape: [3]
+
+# ${task.shape_meta} 는 compose 시 순환/빈 task 노드를 만들 수 있음 → 형제 키 shape_meta 로 참조.
+env_runner:
+  shape_meta: ${shape_meta}
+
+dataset:
+  shape_meta: ${shape_meta}

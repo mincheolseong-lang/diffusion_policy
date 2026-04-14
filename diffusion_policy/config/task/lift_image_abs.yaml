@@ -61,3 +61,12 @@ dataset:
   use_cache: True
   seed: 42
   val_ratio: 0.02
+  # alpha 1.0 = fully opaque; only agentview — not robot0_eye_in_hand_image.
+  image_occlusion:
+    enabled: false
+    rect_norm: [0.38, 0.38, 0.62, 0.62]
+    rect_norm_by_key: {}
+    color: [55, 55, 60]
+    alpha: 1.0
+    keys: [agentview_image]
+    tracking_keys: []

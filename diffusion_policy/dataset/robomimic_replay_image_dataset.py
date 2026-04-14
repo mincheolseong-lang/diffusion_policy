@@ -29,7 +29,83 @@ from diffusion_policy.common.normalize_util import (
     get_identity_normalizer_from_stat,
     array_to_stats
 )
+from diffusion_policy.common.image_occlusion import (
+    apply_rectangle_occlusion_thwc_uint8,
+    apply_tracking_occlusion_thwc_uint8,
+)
 register_codecs()
+
+
+def _replay_cache_zip_path(dataset_path: str, shape_meta: dict) -> str:
+    """Obs 스키마가 바뀌면 다른 zarr 캐시 (예: red_target_pos)."""
+    obs = OmegaConf.to_container(shape_meta["obs"], resolve=True)
+    sig = json.dumps(obs, sort_keys=True, default=str)
+    h = hashlib.md5(sig.encode()).hexdigest()[:12]
+    return f"{dataset_path}.{h}.zarr.zip"
+
+
+def _coerce_image_occlusion_cfg(image_occlusion, rgb_keys):
+    """
+    Return (enabled, rect_norm, color, alpha, keys, rect_norm_by_key, tracking_keys,
+            tracking_rect_norm, apply_probability).
+
+    tracking_rect_norm: optional (x0,y0,x1,y1) for wrist tracking box size; if None,
+        tracking uses rect_norm for (bw, bh) (legacy).
+    apply_probability: in [0,1]. If < 1, each __getitem__ applies occlusion to the whole
+        sample with this probability (both cameras together). Validation set forces clean
+        images when this is < 1 (see get_validation_dataset).
+    """
+    empty = (False, (0.38, 0.38, 0.62, 0.62), (55, 55, 60), 1.0, None, dict(), [], None, 1.0)
+    if image_occlusion is None:
+        return empty
+    if OmegaConf.is_config(image_occlusion):
+        image_occlusion = OmegaConf.to_container(image_occlusion, resolve=True)
+    if not isinstance(image_occlusion, dict):
+        return empty
+    enabled = bool(image_occlusion.get("enabled", False))
+    rn = image_occlusion.get("rect_norm", [0.38, 0.38, 0.62, 0.62])
+    rect_norm = tuple(float(x) for x in rn)
+    c = image_occlusion.get("color", [55, 55, 60])
+    color = tuple(int(x) for x in c)
+    alpha = float(image_occlusion.get("alpha", 1.0))
+    keys = image_occlusion.get("keys", None)
+    if keys is not None and len(keys) == 0:
+        keys = None
+    if enabled and keys is None and rgb_keys:
+        if "agentview_image" in rgb_keys:
+            keys = ["agentview_image"]
+        else:
+            keys = None
+    rect_norm_by_key = dict()
+    raw_by_key = image_occlusion.get("rect_norm_by_key", dict())
+    if isinstance(raw_by_key, dict):
+        for k, v in raw_by_key.items():
+            if v is None:
+                continue
+            rect_norm_by_key[str(k)] = tuple(float(x) for x in v)
+    tracking_keys = image_occlusion.get("tracking_keys", [])
+    if tracking_keys is None:
+        tracking_keys = []
+    tracking_keys = [str(x) for x in tracking_keys]
+    tr_raw = image_occlusion.get("tracking_rect_norm")
+    if tr_raw is not None:
+        tracking_rect_norm = tuple(float(x) for x in tr_raw)
+    else:
+        tracking_rect_norm = None
+    apply_probability = float(image_occlusion.get("apply_probability", 1.0))
+    apply_probability = float(np.clip(apply_probability, 0.0, 1.0))
+    return (
+        enabled,
+        rect_norm,
+        color,
+        alpha,
+        keys,
+        rect_norm_by_key,
+        tracking_keys,
+        tracking_rect_norm,
+        apply_probability,
+    )
+
 
 class RobomimicReplayImageDataset(BaseImageDataset):
     def __init__(self,
@@ -44,14 +120,15 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             use_legacy_normalizer=False,
             use_cache=False,
             seed=42,
-            val_ratio=0.0
+            val_ratio=0.0,
+            image_occlusion=None,
         ):
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
 
         replay_buffer = None
         if use_cache:
-            cache_zarr_path = dataset_path + '.zarr.zip'
+            cache_zarr_path = _replay_cache_zip_path(dataset_path, shape_meta)
             cache_lock_path = cache_zarr_path + '.lock'
             print('Acquiring lock on cache.')
             with FileLock(cache_lock_path):
@@ -97,7 +174,39 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                 rgb_keys.append(key)
             elif type == 'low_dim':
                 lowdim_keys.append(key)
-        
+
+        occ = _coerce_image_occlusion_cfg(image_occlusion, rgb_keys)
+        self.image_occlusion_enabled = occ[0]
+        self._occ_rect_norm = occ[1]
+        self._occ_color = occ[2]
+        self._occ_alpha = occ[3]
+        self._occ_keys = occ[4]
+        self._occ_rect_norm_by_key = occ[5]
+        self._occ_tracking_keys = set(occ[6])
+        self._occ_tracking_rect_norm = occ[7]
+        self._occ_apply_probability = occ[8]
+        self._occ_rng = np.random.default_rng(int(seed))
+        if self.image_occlusion_enabled and self._occ_keys is not None:
+            unknown = [k for k in self._occ_keys if k not in rgb_keys]
+            if unknown:
+                raise ValueError(
+                    f"image_occlusion.keys {unknown} not in dataset rgb keys {rgb_keys}"
+                )
+        if self.image_occlusion_enabled and self._occ_rect_norm_by_key:
+            unknown = set(self._occ_rect_norm_by_key) - set(rgb_keys)
+            if unknown:
+                raise ValueError(
+                    f"image_occlusion.rect_norm_by_key has unknown keys {unknown}; "
+                    f"valid rgb keys: {rgb_keys}"
+                )
+        if self.image_occlusion_enabled and self._occ_tracking_keys:
+            unknown = self._occ_tracking_keys - set(rgb_keys)
+            if unknown:
+                raise ValueError(
+                    f"image_occlusion.tracking_keys has unknown keys {unknown}; "
+                    f"valid rgb keys: {rgb_keys}"
+                )
+
         # for key in rgb_keys:
         #     replay_buffer[key].compressor.numthreads=1
 
@@ -143,6 +252,12 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             episode_mask=~self.train_mask
             )
         val_set.train_mask = ~self.train_mask
+        # Stochastic train-time occlusion: keep val on clean pixels so val_loss matches baseline.
+        if (
+            getattr(self, "image_occlusion_enabled", False)
+            and getattr(self, "_occ_apply_probability", 1.0) < 1.0
+        ):
+            val_set.image_occlusion_enabled = False
         return val_set
 
     def get_normalizer(self, **kwargs) -> LinearNormalizer:
@@ -200,14 +315,39 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         # this slice does nothing (takes all)
         T_slice = slice(self.n_obs_steps)
 
+        apply_occ = False
+        if self.image_occlusion_enabled:
+            if self._occ_apply_probability >= 1.0:
+                apply_occ = True
+            else:
+                apply_occ = self._occ_rng.random() < self._occ_apply_probability
+
+        trn_for_tracking = (
+            self._occ_tracking_rect_norm
+            if self._occ_tracking_rect_norm is not None
+            else self._occ_rect_norm
+        )
+
         obs_dict = dict()
         for key in self.rgb_keys:
-            # move channel last to channel first
-            # T,H,W,C
-            # convert uint8 image to float32
-            obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
-                ).astype(np.float32) / 255.
-            # T,C,H,W
+            # T,H,W,C uint8
+            thwc = np.ascontiguousarray(data[key][T_slice])
+            if apply_occ:
+                if key in self._occ_tracking_keys:
+                    bw = float(trn_for_tracking[2] - trn_for_tracking[0])
+                    bh = float(trn_for_tracking[3] - trn_for_tracking[1])
+                    thwc = apply_tracking_occlusion_thwc_uint8(
+                        thwc,
+                        rect_size_norm=(bw, bh),
+                        color=self._occ_color,
+                        alpha=self._occ_alpha,
+                    )
+                elif self._occ_keys is None or key in self._occ_keys:
+                    rn = self._occ_rect_norm_by_key.get(key, self._occ_rect_norm)
+                    thwc = apply_rectangle_occlusion_thwc_uint8(
+                        thwc, rn, color=self._occ_color, alpha=self._occ_alpha
+                    )
+            obs_dict[key] = np.moveaxis(thwc, -1, 1).astype(np.float32) / 255.0
             del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
@@ -288,10 +428,15 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
             data_key = 'obs/' + key
             if key == 'action':
                 data_key = 'actions'
+            elif key == 'red_target_pos':
+                data_key = 'obs/object'
             this_data = list()
             for i in range(len(demos)):
                 demo = demos[f'demo_{i}']
-                this_data.append(demo[data_key][:].astype(np.float32))
+                arr = demo[data_key][:].astype(np.float32)
+                if key == 'red_target_pos':
+                    arr = arr[..., :3]
+                this_data.append(arr)
             this_data = np.concatenate(this_data, axis=0)
             if key == 'action':
                 this_data = _convert_actions(
